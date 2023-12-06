@@ -3,7 +3,7 @@ package kyo
 import izumi.reflect._
 
 import scala.reflect.ClassTag
-
+import kyo.joins._
 import kyo.core._
 
 object envs {
@@ -53,4 +53,21 @@ object envs {
     def apply[E](implicit tag: Tag[E]): Envs[E] =
       new Envs[E]
   }
+
+  implicit def joinsEnvs[E: Tag]: Joins[Envs[E]] =
+    new Joins[Envs[E]] {
+      type M[T]  = T
+      type State = E
+      val envs = Envs[E]
+
+      def save = envs.get
+
+      def handle[T, S](s: E, v: T > (Envs[E] with S))(implicit
+          f: Flat[T > (Envs[E] with S)]
+      ): T > S =
+        envs.run(s)(v)
+
+      def resume[T, S](v: M[T] > S) =
+        v
+    }
 }

@@ -7,6 +7,7 @@ import scala.reflect.ClassTag
 import scala.util.Failure
 import scala.util.Success
 
+import kyo.joins._
 import kyo._
 import core._
 import tries._

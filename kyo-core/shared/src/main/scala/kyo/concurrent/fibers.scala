@@ -4,6 +4,7 @@ import kyo._
 import kyo.core._
 import kyo.core.internal._
 import kyo.ios._
+import kyo.joins._
 import kyo.locals._
 
 import java.util.concurrent.atomic.AtomicInteger
@@ -164,7 +165,7 @@ object fibers {
 
   type Fibers >: Fibers.Effects <: Fibers.Effects
 
-  object Fibers extends Joins[Fibers] {
+  object Fibers {
 
     type Effects = FiberGets with IOs
 
@@ -203,72 +204,12 @@ object fibers {
     def init[T]( /*inline*/ v: => T > Fibers)(implicit f: Flat[T > Fibers]): Fiber[T] > IOs =
       Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
 
-    def parallel[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Seq[T] > Fibers =
-      l.size match {
-        case 0 => Seq.empty
-        case 1 => l(0).map(Seq(_))
-        case _ =>
-          Fibers.get(parallelFiber[T](l))
-      }
-
-    def parallelFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[Seq[T]] > IOs =
-      l.size match {
-        case 0 => Fiber.done(Seq.empty)
-        case 1 => Fibers.run(l(0).map(Seq(_)))(Flat.unsafe.checked)
-        case _ =>
-          Locals.save.map { st =>
-            IOs {
-              val p       = new IOPromise[Seq[T]]
-              val size    = l.size
-              val results = (new Array[Any](size)).asInstanceOf[Array[T]]
-              val pending = new AtomicInteger(size)
-              var i       = 0
-              foreach(l) { io =>
-                val fiber = IOTask(IOs(io), st)
-                p.interrupts(fiber)
-                val j = i
-                fiber.onComplete { r =>
-                  try {
-                    results(j) = IOs.run(r)(Flat.unsafe.checked)
-                    if (pending.decrementAndGet() == 0) {
-                      p.complete(ArraySeq.unsafeWrapArray(results))
-                    }
-                  } catch {
-                    case ex if (NonFatal(ex)) =>
-                      p.complete(IOs.fail(ex))
-                  }
-                }
-                i += 1
-              }
-              Fiber.promise(p)
-            }
-          }
-      }
-
-    def race[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): T > Fibers =
-      l.size match {
-        case 0 => IOs.fail("Can't race an empty list.")
-        case 1 => l(0)
-        case _ =>
-          Fibers.get(raceFiber[T](l))
-      }
-
-    def raceFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[T] > IOs =
-      l.size match {
-        case 0 => IOs.fail("Can't race an empty list.")
-        case 1 => Fibers.run(l(0))
-        case _ =>
-          Locals.save.map { st =>
-            IOs {
-              val p = new IOPromise[T]
-              foreach(l) { io =>
-                val f = IOTask(IOs(io), st)
-                p.interrupts(f)
-                f.onComplete(p.complete(_))
-              }
-              Fiber.promise(p)
-            }
-          }
+    /*inline*/
+    def init[T, S](j: Joins[S])( /*inline*/ v: => T > (S with Fibers))(implicit
+        f: Flat[T > (S with Fibers)]
+    ): Fiber[j.M[T]] > (S with IOs) =
+      j.save.map { st =>
+        init(j.handle(st, v))
       }
 
     def never: Fiber[Unit] > IOs =
@@ -329,7 +270,215 @@ object fibers {
       }
     }
 
-    private def foreach[T, U](l: Seq[T])(f: T => Unit): Unit = {
+    def parallel[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Seq[T] > Fibers =
+      l.size match {
+        case 0 => Seq.empty
+        case 1 => l(0).map(Seq(_))
+        case _ =>
+          Fibers.get(parallelFiber[T](l))
+      }
+
+    def parallel[T, S](j: Joins[S])(l: Seq[T > (S with Fibers)])(
+        implicit f: Flat[T > Fibers]
+    ): Seq[T] > (S with Fibers) =
+      j.save.map { st =>
+        j.handle(st, l).map(parallel(_)).map(j.resume)
+      }
+
+    def parallelFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[Seq[T]] > IOs =
+      l.size match {
+        case 0 => Fiber.done(Seq.empty)
+        case 1 => Fibers.run(l(0).map(Seq(_)))(Flat.unsafe.checked)
+        case _ =>
+          Locals.save.map { st =>
+            IOs {
+              val p       = new IOPromise[Seq[T]]
+              val size    = l.size
+              val results = (new Array[Any](size)).asInstanceOf[Array[T]]
+              val pending = new AtomicInteger(size)
+              var i       = 0
+              foreach(l) { io =>
+                val fiber = IOTask(IOs(io), st)
+                p.interrupts(fiber)
+                val j = i
+                fiber.onComplete { r =>
+                  try {
+                    results(j) = IOs.run(r)(Flat.unsafe.checked)
+                    if (pending.decrementAndGet() == 0) {
+                      p.complete(ArraySeq.unsafeWrapArray(results))
+                    }
+                  } catch {
+                    case ex if (NonFatal(ex)) =>
+                      p.complete(IOs.fail(ex))
+                  }
+                }
+                i += 1
+              }
+              Fiber.promise(p)
+            }
+          }
+      }
+
+    def race[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): T > Fibers =
+      l.size match {
+        case 0 => IOs.fail("Can't race an empty list.")
+        case 1 => l(0)
+        case _ =>
+          Fibers.get(raceFiber[T](l))
+      }
+
+    def race[T, S](j: Joins[S])(l: Seq[T > (S with Fibers)])(implicit
+        f: Flat[T > (S with Fibers)]
+    ): T > (S with Fibers) =
+      j.save.map { st =>
+        j.handle(st, l).map(race(_)).map(j.resume)
+      }
+
+    def raceFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[T] > IOs =
+      l.size match {
+        case 0 => IOs.fail("Can't race an empty list.")
+        case 1 => Fibers.run(l(0))
+        case _ =>
+          Locals.save.map { st =>
+            IOs {
+              val p = new IOPromise[T]
+              foreach(l) { io =>
+                val f = IOTask(IOs(io), st)
+                p.interrupts(f)
+                f.onComplete(p.complete(_))
+              }
+              Fiber.promise(p)
+            }
+          }
+      }
+
+    def parallelTraverse[T, U](v: Seq[T] > Fibers)(f: T => U > Fibers)(implicit
+        flat: Flat[U > Fibers]
+    ): Seq[U] > Fibers =
+      v.map(_.map(f)).map(parallel[U](_))
+
+    def race[T](
+        v1: => T > Fibers,
+        v2: => T > Fibers
+    )(implicit f: Flat[T > Fibers]): T > Fibers =
+      race(List(v1, v2))
+
+    def race[T](
+        v1: => T > Fibers,
+        v2: => T > Fibers,
+        v3: => T > Fibers
+    )(implicit f: Flat[T > Fibers]): T > Fibers =
+      race(List(v1, v2, v3))
+
+    def race[T](
+        v1: => T > Fibers,
+        v2: => T > Fibers,
+        v3: => T > Fibers,
+        v4: => T > Fibers
+    )(implicit f: Flat[T > Fibers]): T > Fibers =
+      race(List(v1, v2, v3, v4))
+
+    def race[T, S](j: Joins[S])(
+        v1: => T > (S with Fibers),
+        v2: => T > (S with Fibers)
+    )(implicit f: Flat[T > (S with Fibers)]): T > (S with Fibers) =
+      race(j)(List(v1, v2))
+
+    def race[T, S](j: Joins[S])(
+        v1: => T > (S with Fibers),
+        v2: => T > (S with Fibers),
+        v3: => T > (S with Fibers)
+    )(implicit f: Flat[T > (S with Fibers)]): T > (S with Fibers) =
+      race(j)(List(v1, v2, v3))
+
+    def race[T, S](j: Joins[S])(
+        v1: => T > (S with Fibers),
+        v2: => T > (S with Fibers),
+        v3: => T > (S with Fibers),
+        v4: => T > (S with Fibers)
+    )(implicit f: Flat[T > (S with Fibers)]): T > (S with Fibers) =
+      race(j)(List(v1, v2, v3, v4))
+
+    def parallel[T1, T2](
+        v1: => T1 > Fibers,
+        v2: => T2 > Fibers
+    )(implicit
+        f1: Flat[T1 > Fibers],
+        f2: Flat[T2 > Fibers]
+    ): (T1, T2) > Fibers =
+      parallel(List(v1, v2))(Flat.unsafe.checked).map(s =>
+        (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2])
+      )
+
+    def parallel[T1, T2, T3](
+        v1: => T1 > Fibers,
+        v2: => T2 > Fibers,
+        v3: => T3 > Fibers
+    )(implicit
+        f1: Flat[T1 > Fibers],
+        f2: Flat[T2 > Fibers],
+        f3: Flat[T3 > Fibers]
+    ): (T1, T2, T3) > Fibers =
+      parallel(List(v1, v2, v3))(Flat.unsafe.checked).map(s =>
+        (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3])
+      )
+
+    def parallel[T1, T2, T3, T4](
+        v1: => T1 > Fibers,
+        v2: => T2 > Fibers,
+        v3: => T3 > Fibers,
+        v4: => T4 > Fibers
+    )(implicit
+        f1: Flat[T1 > Fibers],
+        f2: Flat[T2 > Fibers],
+        f3: Flat[T3 > Fibers],
+        f4: Flat[T4 > Fibers]
+    ): (T1, T2, T3, T4) > Fibers =
+      parallel(List(v1, v2, v3, v4))(Flat.unsafe.checked).map(s =>
+        (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3], s(3).asInstanceOf[T4])
+      )
+
+    def parallel[T1, T2, S](j: Joins[S])(
+        v1: => T1 > (S with Fibers),
+        v2: => T2 > (S with Fibers)
+    )(implicit
+        f1: Flat[T1 > (S with Fibers)],
+        f2: Flat[T2 > (S with Fibers)]
+    ): (T1, T2) > (S with Fibers) =
+      parallel(j)(List(v1, v2))(Flat.unsafe.checked).map(s =>
+        (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2])
+      )
+
+    def parallel[T1, T2, T3, S](j: Joins[S])(
+        v1: => T1 > (S with Fibers),
+        v2: => T2 > (S with Fibers),
+        v3: => T3 > (S with Fibers)
+    )(implicit
+        f1: Flat[T1 > (S with Fibers)],
+        f2: Flat[T2 > (S with Fibers)],
+        f3: Flat[T3 > (S with Fibers)]
+    ): (T1, T2, T3) > (S with Fibers) =
+      parallel(j)(List(v1, v2, v3))(Flat.unsafe.checked).map(s =>
+        (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3])
+      )
+
+    def parallel[T1, T2, T3, T4, S](j: Joins[S])(
+        v1: => T1 > (S with Fibers),
+        v2: => T2 > (S with Fibers),
+        v3: => T3 > (S with Fibers),
+        v4: => T4 > (S with Fibers)
+    )(implicit
+        f1: Flat[T1 > (S with Fibers)],
+        f2: Flat[T2 > (S with Fibers)],
+        f3: Flat[T3 > (S with Fibers)],
+        f4: Flat[T4 > (S with Fibers)]
+    ): (T1, T2, T3, T4) > (S with Fibers) =
+      parallel(List(v1, v2, v3, v4))(Flat.unsafe.checked).map(s =>
+        (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3], s(3).asInstanceOf[T4])
+      )
+
+    /*inline*/
+    private def foreach[T, U](l: Seq[T])( /*inline*/ f: T => Unit): Unit = {
       val it = l.iterator
       while (it.hasNext) {
         f(it.next())

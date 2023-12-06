@@ -5,7 +5,6 @@ import kyo.llm.completions._
 import kyo.llm.configs._
 import kyo.llm.contexts._
 import kyo.llm.agents._
-import kyo.concurrent.Joins
 import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
 import kyo.ios._
@@ -155,7 +154,7 @@ object ais {
       } yield r
   }
 
-  object AIs extends Joins[AIs] {
+  object AIs {
 
     type Effects = Sums[State] with Requests
 
@@ -219,30 +218,6 @@ object ais {
     def ephemeral[T, S](f: => T > S)(implicit flat: Flat[T > S]): T > (AIs with S) =
       State.get.map { st =>
         Tries.run[T, S](f).map(r => State.set(st).map(_ => r.get))
-      }
-
-    def race[T](l: Seq[T > AIs])(implicit f: Flat[T > AIs]): T > AIs =
-      State.get.map { st =>
-        Requests.race[(T, State)](l.map(State.run[T, Requests](st)))
-          .map {
-            case (v, st) =>
-              State.set(st).map(_ => v)
-          }
-      }
-
-    def parallel[T](l: Seq[T > AIs])(implicit f: Flat[T > AIs]): Seq[T] > AIs =
-      State.get.map { st =>
-        Requests.parallel[(T, State)](l.map(State.run[T, Requests](st)))
-          .map { rl =>
-            val r = rl.map(_._1)
-            val st =
-              rl.map(_._2)
-                .foldLeft(Map.empty: State) {
-                  case (acc, st) =>
-                    summer.add(acc, st)
-                }
-            State.set(st).map(_ => r)
-          }
       }
   }
 

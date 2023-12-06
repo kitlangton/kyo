@@ -1,9 +1,9 @@
 package kyo
 
 import kyo._
-import kyo.concurrent.Joins
 import kyo.concurrent.fibers._
 import kyo.envs._
+import kyo.joins._
 import kyo.ios._
 import sttp.client3._
 
@@ -19,7 +19,7 @@ object requests {
 
   type Requests >: Requests.Effects <: Requests.Effects
 
-  object Requests extends Joins[Requests] {
+  object Requests {
 
     type Effects = Envs[Backend] with Fibers
 
@@ -61,14 +61,20 @@ object requests {
         }
       }
 
-    def race[T](l: Seq[T > Requests])(implicit f: Flat[T > Requests]): T > Requests =
-      envs.get.map { b =>
-        Fibers.race(l.map(Requests.run(b)(_)))
-      }
+    // implicit def joinsRequests: Joins[Requests] =
+    //   new Joins[Requests] {
 
-    def parallel[T](l: Seq[T > Requests])(implicit f: Flat[T > Requests]): Seq[T] > Requests =
-      envs.get.map { b =>
-        Fibers.parallel(l.map(Requests.run(b)(_)))
-      }
+    //     type M[T]  = T
+    //     type State = Backend
+    //     def save = envs.get
+
+    //     def handle[T, S](s: Backend, v: T > (Requests with S))(
+    //         implicit f: Flat[T > (Requests with S)]
+    //     ) =
+    //       Requests.run(s)(v)
+
+    //     def resume[T, S](v: Nothing > S): T > (Requests with S) =
+    //       v
+    //   }
   }
 }

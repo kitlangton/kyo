@@ -271,6 +271,23 @@ lazy val `kyo-llm` =
     )
     .jsSettings(`js-settings`)
 
+lazy val `kyo-copilot` =
+  crossProject(JSPlatform, JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Full)
+    .in(file("kyo-copilot"))
+    .dependsOn(`kyo-llm`)
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .settings(
+        `kyo-settings`,
+        `without-cross-scala`,
+        libraryDependencies += "ch.qos.logback"    % "logback-classic" % "1.4.14",
+        libraryDependencies += "com.eed3si9n.eval" % "eval_3.3.1"      % "0.3.0",
+        assemblyMergeStrategy                     := (_ => MergeStrategy.last),
+        assembly / mainClass                      := Some("kyo.copilot.internal.SeedGen")
+    )
+    .jsSettings(`js-settings`)
+
 lazy val `kyo-bench` =
   crossProject(JVMPlatform)
     .withoutSuffixFor(JVMPlatform)

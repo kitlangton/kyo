@@ -2,60 +2,47 @@ package kyo
 
 import izumi.reflect.*
 import kyo.core.*
+import scala.annotation.implicitNotFound
+
+opaque type Envs[-T] = IOs
 
 object Envs:
-    private case object Input
 
-    type Env[E] = {
-        type Value[T] >: T // = T | Input.type
-    }
+    private val local = Locals.init(Map.empty[Tag[_], Any])
 
-    def apply[E](using tag: Tag[E]): Envs[E] =
-        new Envs[E]
-end Envs
-import Envs.*
+    final case class EnvsDsl[E](tag: Tag[E]):
+        self =>
 
-final class Envs[E] private[kyo] (using private val tag: Tag[?])
-    extends Effect[Env[E]#Value, Envs[E]]:
-    self =>
+        def let[T, E1, S1, S2](e: E < S1)(
+            v: T < (Envs[E | E1] & S2)
+        ): T < (Envs[E1] & S1 & S2) =
+            e.map(e => local.update(_ + (tag -> e))(v))
 
-    val get: E < Envs[E] =
-        suspend(Input.asInstanceOf[Env[E]#Value[E]])
+        def use[T, E1, S](f: E => T < S): T < (Envs[E] & S) =
+            get.map(f)
 
-    def use[T, S](f: E => T < S): T < (Envs[E] & S) =
-        get.map(f)
+        def get: E < Envs[E] =
+            local.get.map(_.getOrElse(
+                tag,
+                bug("Missing environment value: " + tag)
+            ).asInstanceOf[E])
 
-    def run[T, S](e: E < S)(v: T < (Envs[E] & S))(using f: Flat[T < (Envs[E] & S)]): T < S =
-        e.map { e =>
-            given Handler[Env[E]#Value, Envs[E], Any] =
-                new Handler[Env[E]#Value, Envs[E], Any]:
-                    def pure[U: Flat](v: U) = v
-                    def apply[U, V: Flat, S2](
-                        m: Env[E]#Value[U],
-                        f: U => V < (Envs[E] & S2)
-                    ): V < (S2 & Envs[E]) =
-                        m match
-                            case Input =>
-                                f(e.asInstanceOf[U])
-                            case _ =>
-                                f(m.asInstanceOf[U])
-            handle[T, Envs[E] & S, Any](v).asInstanceOf[T < S]
-        }
-    end run
+        def layer[S](construct: E < S): Layer[Envs[E], S & IOs] =
+            new Layer[Envs[E], S & IOs]:
+                override def run[T, S1](effect: T < (Envs[E] & S1))(
+                    implicit fl: Flat[T < (Envs[E] & S1)]
+                ): T < (S & S1 & IOs) =
+                    construct.map(e => Envs.run(self.let(e)(effect)))
 
-    override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
-        other match
-            case other: Envs[?] =>
-                other.tag.tag == tag.tag
-            case _ =>
-                false
+    end EnvsDsl
 
-    override def toString = s"Envs[${tag.tag.longNameWithPrefix}]"
+    def apply[E](using tag: Tag[E]) = EnvsDsl[E](tag)
 
-    def layer[Sd](construct: E < Sd): Layer[Envs[E], Sd] =
-        new Layer[Envs[E], Sd]:
-            override def run[T, S](effect: T < (Envs[E] & S))(implicit
-                fl: Flat[T < (Envs[E] & S)]
-            ): T < (Sd & S) =
-                construct.map(e => self.run[T, S](e)(effect))
+    def run[T, S, E](v: T < (Envs[E] & S))(
+        using
+        @implicitNotFound(
+            "Pending: '${E}'. Use 'let' to satisfy the missing requirements: 'Envs[YourType].let(value)(computation)'"
+        ) ev: E => Nothing
+    ): T < (IOs with S) =
+        v
 end Envs

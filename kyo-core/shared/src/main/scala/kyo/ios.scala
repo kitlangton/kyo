@@ -95,26 +95,6 @@ sealed trait IOs extends Effect[IO, IOs]:
         runLoop(v)
     end run
 
-    def runLazy[T, S](v: T < (IOs & S))(using f: Flat[T < (IOs & S)]): T < S =
-        def runLazyLoop(v: T < (IOs & S)): T < S =
-            val safepoint = Safepoint.noop[IO, IOs]
-            v match
-                case kyo: Kyo[?, ?, ?, ?, ?] =>
-                    if kyo.effect eq IOs then
-                        val k = kyo.asInstanceOf[Kyo[IO, IOs, Unit, T, S & IOs]]
-                        runLazyLoop(k((), safepoint, Locals.State.empty))
-                    else
-                        val k = kyo.asInstanceOf[Kyo[MX, EX, Any, T, S & IOs]]
-                        new KyoCont[MX, EX, Any, T, S](k):
-                            def apply(v: Any < S, s: Safepoint[MX, EX], l: Locals.State) =
-                                runLazyLoop(k(v, s, l))
-                case _ =>
-                    v.asInstanceOf[T]
-            end match
-        end runLazyLoop
-        runLazyLoop(v)
-    end runLazy
-
     def ensure[T, S](f: => Unit < IOs)(v: T < S): T < (IOs & S) =
         val ensure = new Ensure:
             def run = f

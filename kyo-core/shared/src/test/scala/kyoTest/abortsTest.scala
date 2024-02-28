@@ -173,7 +173,7 @@ class abortsTest extends KyoTest:
                     }
                 "success" in {
                     assert(
-                        Envs[Int].run(2)(
+                        Envs[Int].let(2)(
                             Aborts[Ex1].run(Aborts[Ex1].catching(test(Envs[Int].get)))
                         ) ==
                             Right(5)
@@ -181,7 +181,7 @@ class abortsTest extends KyoTest:
                 }
                 "failure" in {
                     assert(
-                        Envs[Int].run(0)(
+                        Envs[Int].let(0)(
                             Aborts[Ex1].run(Aborts[Ex1].catching(test(Envs[Int].get)))
                         ) ==
                             Left(ex1)

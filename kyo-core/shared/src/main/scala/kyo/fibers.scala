@@ -276,7 +276,7 @@ object fibersInternal:
                     def pure[T: Flat](v: T) = Done(v)
                     def apply[T, U: Flat](m: Fiber[T], f: T => Fiber[U] < IOs) =
                         m.transform(f)
-            IOs(deepHandle[Fiber, FiberGets, T, IOs](FiberGets)(IOs.runLazy(v)))
+            IOs(deepHandle[Fiber, FiberGets, T, IOs](FiberGets)(v))
         end run
 
         def runAndBlock[T, S](timeout: Duration)(v: T < (Fibers & S))(implicit
